@@ -4,7 +4,7 @@ import helper
 import warnings
 from distutils.version import LooseVersion
 import project_tests as tests
-
+import time
 
 # Check TensorFlow Version
 assert LooseVersion(tf.__version__) >= LooseVersion('1.0'), 'Please use TensorFlow version 1.0 or newer.  You are using {}'.format(tf.__version__)
@@ -20,10 +20,10 @@ else:
 # hyperparameters
 NUM_CLASSES = 2 # TODO - 3 labels
 IMG_SHAPE = (160, 576)
-BATCH_SZ = 2 # 5?
-EPOCHS = 30 # 10 or 50
-LEARN_RATE = 5e-4 # 1e-4
-KEEP_PROB = 0.7 # 0.75, 0.8
+BATCH_SZ = 5 # 5
+EPOCHS = 40 # 40
+LEARN_RATE = 5e-4 # 5e-4
+KEEP_PROB = 0.75 # 0.75
 
 def load_vgg(sess, vgg_path):
     """
@@ -68,22 +68,22 @@ def layers(vgg_layer3_out, vgg_layer4_out, vgg_layer7_out, num_classes):
     k_init = tf.truncated_normal_initializer(stddev = 0.01)
 
     conv3 = tf.layers.conv2d(vgg_layer3_out, num_classes, 1, padding='same',
-                             kernel_regulizer=k_reg, kernel_initializer=k_init)
+                             kernel_regularizer=k_reg, kernel_initializer=k_init)
     conv4 = tf.layers.conv2d(vgg_layer4_out, num_classes, 1, padding='same',
-                             kernel_regulizer=k_reg, kernel_initializer=k_init)
+                             kernel_regularizer=k_reg, kernel_initializer=k_init)
     conv7 = tf.layers.conv2d(vgg_layer7_out, num_classes, 1, padding='same',
-                             kernel_regulizer=k_reg, kernel_initializer=k_init)
+                             kernel_regularizer=k_reg, kernel_initializer=k_init)
 
-    decv7 = tf.layers.conv2d_transpose(conv7, num_outputs=num_classes, kernel_size=4, stride=2, padding='same',
-                             kernel_regulizer=k_reg, kernel_initializer=k_init)
+    decv7 = tf.layers.conv2d_transpose(conv7, filters=num_classes, kernel_size=4, strides=(2, 2), padding='same',
+                             kernel_regularizer=k_reg, kernel_initializer=k_init)
     skip4 = tf.add(conv4, decv7)
 
-    decv4 = tf.layers.conv2d_transpose(skip4, num_outputs=num_classes, kernel_size=4, stride=2, padding='same',
-                             kernel_regulizer=k_reg, kernel_initializer=k_init)
+    decv4 = tf.layers.conv2d_transpose(skip4, filters=num_classes, kernel_size=4, strides=(2, 2), padding='same',
+                             kernel_regularizer=k_reg, kernel_initializer=k_init)
     skip3 = tf.add(conv3, decv4)
 
-    decv3 = tf.layers.conv2d_transpose(skip3, num_outputs=num_classes, kernel_size=16, stride=8, padding='same',
-                             kernel_regulizer=k_reg, kernel_initializer=k_init)
+    decv3 = tf.layers.conv2d_transpose(skip3, filters=num_classes, kernel_size=16, strides=(8, 8), padding='same',
+                             kernel_regularizer=k_reg, kernel_initializer=k_init)
 
     return decv3
 
@@ -128,20 +128,7 @@ def train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_l
     :param keep_prob: TF Placeholder for dropout keep probability
     :param learning_rate: TF Placeholder for learning rate
     """
-
     sess.run(tf.global_variables_initializer())
-
-    #train_loss_summary = tf.placeholder(tf.float32)
-    #val_loss_summary = tf.placeholder(tf.float32)
-    #train_iou_summary = tf.placeholder(tf.float32)
-    #val_iou_summary = tf.placeholder(tf.float32)
-
-    #tf.summary.scalar("train_loss", train_loss_summary)
-    #tf.summary.scalar("train_iou", train_iou_summary)
-    #tf.summary.scalar("val_loss", val_loss_summary)
-    #tf.summary.scalar("val_iou", val_iou_summary)
-    #tf.summary.scalar("learning_rate", learning_rate)
-
 
     for epoch in range(epochs):
         ts = time.time()
@@ -150,7 +137,7 @@ def train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_l
             feed_dict = { input_image: img, correct_label: lbl, keep_prob: KEEP_PROB, learning_rate: LEARN_RATE }
             _, loss = sess.run([ train_op, cross_entropy_loss ], feed_dict=feed_dict)
         ts_delta = time.time() - ts
-        print("  Loss={:.4f} dt={}:{}".format(loss, ts_delta / 60, ts_delta % 60))
+        print("  Loss={:.4f} dt={}:{}".format(loss, int(ts_delta / 60), int(ts_delta % 60)))
 
 
 tests.test_train_nn(train_nn)
@@ -175,6 +162,7 @@ def run():
     #  https://www.cityscapes-dataset.com/
 
     with tf.Session() as sess:
+
         # Path to vgg model
         vgg_path = os.path.join(data_dir, 'vgg')
         # Create function to get batches
@@ -188,12 +176,26 @@ def run():
         layer_final = layers(l3, l4, l7, NUM_CLASSES)
         logits, training_operation, loss_operation = optimize(layer_final, correct_label, learning_rate=learning_rate, num_classes=NUM_CLASSES)
 
+        # Add ops to save and restore all the variables.
+        saver = tf.train.Saver()
+
         # Train NN using the train_nn function
         train_nn(sess, EPOCHS, BATCH_SZ, get_batches_fn, training_operation, loss_operation, input_img,
              correct_label, keep_prob, learning_rate=learning_rate)
 
         # Save inference data using helper.save_inference_samples
-        helper.save_inference_samples(runs_dir, data_dir, sess, IMG_SHAPE, logits, keep_prob, input_image)
+        helper.save_inference_samples(runs_dir, data_dir, sess, IMG_SHAPE, logits, keep_prob, input_img)
+
+        # Save the variables to disk.
+        #state_path = os.path.join(data_dir, 'state')
+        #save_path = saver.save(sess, "{}/state_{}.ckpt".format(state_path, int(time.time())))
+        #print("Model saved in path: %s" % save_path)
+        #tf.saved_model.simple_save(sess, export_dir, state_path
+        #inputs={"x": x, "y": y},
+        #outputs={"z": z})
+        #builder = tf.saved_model.builder.SavedModelBuilder(model_dir)
+        #builder.add_meta_graph_and_variables(sess, [self._tag])
+        #builder.save()
 
         # OPTIONAL: Apply the trained model to a video
 
